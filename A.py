@@ -4,116 +4,139 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # --- CONFIG ---
-st.set_page_config(page_title="Pile Load Analysis", layout="wide")
+st.set_page_config(page_title="Bakhoum Pile Analysis", layout="wide")
 
+# --- UI STYLING ---
 st.markdown("""
     <style>
-    .stMetric { background-color: #f0f2f6; padding: 10px; border-radius: 10px; }
+    .reportview-container { background: #f5f7f9; }
+    .stMetric { background-color: #ffffff; border: 1px solid #e0e0e0; padding: 15px; border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- HEADER ---
-st.title("🏗️ โปรแกรมตรวจสอบแรงเสาเข็มเยื้องศูนย์")
-st.info("คำนวณตามวิธี Bakhoum (1992) รองรับทั้งกลุ่มเสาเข็มสมมาตรและไม่สมมาตร")
+st.title("🏗️ โปรแกรมวิเคราะห์แรงเสาเข็ม (Bakhoum Method)")
+st.caption("อ้างอิงขั้นตอนจากสไลด์ รศ.ดร.อิทธิพล มีผล - มจพ.")
 
 # --- 1. INPUT SECTION ---
-col1, col2 = st.columns([1, 2], gap="large")
+col_in, col_graph = st.columns([1, 1.2], gap="large")
 
-with col1:
-    st.subheader("1️⃣ ข้อมูลแรงและพิกัด")
-    Q = st.number_input("น้ำหนักลงตอหม้อ (Q) [tons/kN]", value=50.0)
+with col_in:
+    st.subheader("📋 1. ป้อนข้อมูลนำเข้า")
+    Q = st.number_input("น้ำหนักบรรทุกทั้งหมด (Q) [tons]", value=50.0, step=1.0)
     
-    st.write("---")
-    st.write("📍 **ตารางพิกัดเสาเข็ม**")
-    st.caption("กรอกพิกัดตามแบบ (Design) และระยะที่เยื้องจริงจากการก่อสร้าง (Error)")
+    st.write("📍 **ตารางตำแหน่งและระยะเยื้องเสาเข็ม**")
+    st.caption("Design X, Y (cm) และระยะเยื้องที่ตรวจพบ Error X, Y (cm)")
     
-    # ข้อมูลเริ่มต้นตามตัวอย่างในสไลด์
+    # ตัวอย่างข้อมูลเริ่มต้น (ตาม Slide 12)
     initial_data = pd.DataFrame({
-        'Pile': ['P1', 'P2', 'P3', 'P4'],
-        'Design_X': [-50.0, 50.0, -50.0, 50.0],
-        'Design_Y': [50.0, 50.0, -50.0, -50.0],
-        'Error_X': [0.0, 5.0, 0.0, -2.0],  # ระยะเยื้องที่ตรวจพบจริง
-        'Error_Y': [3.0, 0.0, -7.0, 0.0]
+        'No.': ['P1', 'P2', 'P3', 'P4'],
+        'Design_X': [-37.5, 37.5, -37.5, 37.5],
+        'Design_Y': [37.5, 37.5, -37.5, -37.5],
+        'error_x': [0.0, 7.0, 0.0, 0.0],  # ex ในสไลด์
+        'error_y': [5.0, -10.0, 0.0, 0.0]  # ey ในสไลด์
     })
-    input_df = st.data_editor(initial_data, num_rows="dynamic", use_container_width=True)
+    df = st.data_editor(initial_data, num_rows="dynamic", use_container_width=True)
 
-# --- 2. CALCULATION LOGIC (ตามขั้นตอนในสไลด์) ---
-if not input_df.empty:
-    n_piles = len(input_df)
+# --- 2. CALCULATION (STEP-BY-STEP AS PER SLIDES) ---
+if not df.empty:
+    n = len(df)
     
     # Step 1: คำนวณพิกัดจริง (Actual Coordinates)
-    input_df['Actual_X'] = input_df['Design_X'] + input_df['Error_X']
-    input_df['Actual_Y'] = input_df['Design_Y'] + input_df['Error_Y']
+    df['Actual_X'] = df['Design_X'] + df['error_x']
+    df['Actual_Y'] = df['Design_Y'] + df['error_y']
     
-    # Step 2: หาจุด Centroid ใหม่ (Slide 10)
-    x_bar = input_df['Actual_X'].mean()
-    y_bar = input_df['Actual_Y'].mean()
+    # Step 2: หา Centroid ใหม่ (X_bar, Y_bar) - Slide 10
+    X_bar = df['Actual_X'].mean()
+    Y_bar = df['Actual_Y'].mean()
     
-    # Step 3: หาพิกัดสัมพัทธ์เทียบกับ Centroid ใหม่ (Slide 12)
-    input_df['x'] = input_df['Actual_X'] - x_bar
-    input_df['y'] = input_df['Actual_Y'] - y_bar
+    # Step 3: คำนวณพิกัดสัมพัทธ์ (x, y) เทียบ Centroid - Slide 12
+    df['x'] = df['Actual_X'] - X_bar
+    df['y'] = df['Actual_Y'] - Y_bar
     
-    # Step 4: คำนวณคุณสมบัติหน้าตัด (Slide 13)
-    sum_x2 = (input_df['x']**2).sum()
-    sum_y2 = (input_df['y']**2).sum()
-    sum_xy = (input_df['x'] * input_df['y']).sum()
+    # Step 4: คำนวณผลรวมกำลังสอง (Summation) - Slide 13
+    df['x2'] = df['x']**2
+    df['y2'] = df['y']**2
+    df['xy'] = df['x'] * df['y']
     
-    # Step 5: คำนวณโมเมนต์ลัพธ์เทียบจุดหมุนใหม่ (Slide 11)
-    Mx = Q * y_bar
-    My = Q * x_bar
+    sum_x2 = df['x2'].sum()
+    sum_y2 = df['y2'].sum()
+    sum_xy = df['xy'].sum()
     
-    # Step 6: คำนวณสัมประสิทธิ์ m, n (Bakhoum Formula - Slide 23)
+    # Step 5: คำนวณโมเมนต์ดัด (Mx, My) - Slide 11
+    Mx = Q * Y_bar
+    My = Q * X_bar
+    
+    # Step 6: คำนวณค่า m, n Coefficients - Slide 23
+    # สูตร Bakhoum สำหรับกรณีทั่วไป (Unsymmetrical)
     denom = (sum_x2 * sum_y2) - (sum_xy**2)
+    
     if abs(denom) < 1e-9:
-        m, n = 0, 0
+        m, n_coeff = 0, 0
     else:
         m = (My * sum_y2 - Mx * sum_xy) / denom
-        n = (Mx * sum_x2 - My * sum_xy) / denom
+        n_coeff = (Mx * sum_x2 - My * sum_xy) / denom
     
-    # Step 7: คำนวณแรง Pi = Q/n + mx + ny
-    input_df['Force_Pi'] = (Q / n_piles) + (m * input_df['x']) + (n * input_df['y'])
-    
-    # --- 3. RESULT DISPLAY ---
-    with col2:
-        st.subheader("2️⃣ ผลการวิเคราะห์")
+    # Step 7: คำนวณแรงในเสาเข็มแต่ละต้น (Pi) - Slide 23
+    df['Pi'] = (Q / n) + (m * df['x']) + (n_coeff * df['y'])
+
+    # --- 3. OUTPUT & VISUALIZATION ---
+    with col_graph:
+        st.subheader("📊 2. ผลการวิเคราะห์และการกระจายแรง")
         
-        # ส่วนแสดง Metrics
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Max Load", f"{input_df['Force_Pi'].max():.2f}")
-        m2.metric("Min Load", f"{input_df['Force_Pi'].min():.2f}")
-        m3.metric("Sum Pi Check", f"{input_df['Force_Pi'].sum():.1f}")
+        # แสดงค่า Centroid ใหม่ที่เลื่อนไป
+        c1, c2 = st.columns(2)
+        c1.metric("Centroidใหม่ X̄", f"{X_bar:.2f} cm")
+        c2.metric("Centroidใหม่ Ȳ", f"{Y_bar:.2f} cm")
+
+        # กราฟแสดงผล (ใช้ตัวแปรตามสไลด์)
+        fig, ax = plt.subplots(figsize=(7, 6))
         
-        # ส่วนแสดงพิกัดที่เบี้ยวไป (Centroid)
-        st.warning(f"⚠️ จุดศูนย์กลางเปลี่ยนไปที่: X = {x_bar:.2f}, Y = {y_bar:.2f}")
-
-        # ตารางสรุปแรง
-        st.dataframe(
-            input_df[['Pile', 'Actual_X', 'Actual_Y', 'Force_Pi']].rename(columns={'Force_Pi': 'แรงลงเสาเข็ม (Pi)'}),
-            use_container_width=True, hide_index=True
-        )
-
-        # กราฟแสดงตำแหน่งเสาเข็ม
-        fig, ax = plt.subplots(figsize=(6, 5))
-        ax.scatter(input_df['Actual_X'], input_df['Actual_Y'], s=input_df['Force_Pi']*10, c=input_df['Force_Pi'], cmap='RdYlGn_r', edgecolors='k')
+        # จุดเสาเข็ม (ขนาดแปรผันตามแรง Pi)
+        norm_size = (df['Pi'] / df['Pi'].max()) * 800 + 200
+        scatter = ax.scatter(df['Actual_X'], df['Actual_Y'], s=norm_size, 
+                            c=df['Pi'], cmap='Reds', edgecolors='black', linewidth=1.5, zorder=3)
         
-        # วาดจุด Centroid ใหม่
-        ax.scatter(x_bar, y_bar, color='blue', marker='X', s=150, label='New Centroid')
-        ax.scatter(0, 0, color='grey', marker='+', s=100, label='Design Center')
+        # เส้นกริดและแกน 0,0
+        ax.axhline(0, color='black', lw=1, ls='--')
+        ax.axvline(0, color='black', lw=1, ls='--')
+        
+        # จุด Centroid ใหม่ (สัญลักษณ์ X)
+        ax.scatter(X_bar, Y_bar, color='blue', marker='X', s=200, label=f'New Centroid (X̄,Ȳ)', zorder=4)
+        
+        # ใส่ชื่อเสาและค่า Pi
+        for i, row in df.iterrows():
+            ax.text(row['Actual_X'], row['Actual_Y'] + 4, 
+                    f"{row['No.']}\nPi={row['Pi']:.2f}", 
+                    ha='center', fontsize=9, fontweight='bold')
 
-        for i, txt in enumerate(input_df['Pile']):
-            ax.annotate(f"{txt}\n({input_df['Force_Pi'].iloc[i]:.1f})", (input_df['Actual_X'].iloc[i], input_df['Actual_Y'].iloc[i]+2), ha='center', fontsize=8)
-
-        ax.set_title("ผังเสาเข็มและการกระจายแรงจริง")
-        ax.legend(fontsize='small')
-        ax.grid(True, linestyle=':', alpha=0.6)
+        ax.set_xlabel("Actual Coordinate X (cm)")
+        ax.set_ylabel("Actual Coordinate Y (cm)")
+        ax.set_title(f"Pile Load Distribution (Q = {Q} tons)")
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+        
         st.pyplot(fig)
 
-# --- 4. EXPLAINER ---
-with st.expander("📝 ดูขั้นตอนการคำนวณตามสไลด์"):
-    st.write(f"""
-    1. **หาจุด Centroid ใหม่:** $\\bar{{x}} = \\sum(X_{{design}} + e_x)/n$ = {x_bar:.2f}
-    2. **คำนวณโมเมนต์:** $M_x = Q \\cdot \\bar{{y}}$ และ $M_y = Q \\cdot \\bar{{x}}$
-    3. **พิกัดใหม่:** $x = X_{{actual}} - \\bar{{x}}$ และ $y = Y_{{actual}} - \\bar{{y}}$
-    4. **คุณสมบัติกลุ่มเสา:** $\\sum x^2 = {sum_x2:.2f}, \\sum y^2 = {sum_y2:.2f}, \\sum xy = {sum_xy:.2f}$
-    5. **สมการ Bakhoum:** ใช้ค่า $m$ และ $n$ เพื่อหาแรงลงเสาเข็มแต่ละต้น
-    """)
+    # --- 4. DATA SUMMARY TABLE ---
+    st.subheader("📑 3. ตารางสรุปค่าตามขั้นตอนคำนวณ")
+    output_display = df[['No.', 'Actual_X', 'Actual_Y', 'x', 'y', 'Pi']]
+    st.dataframe(output_display.rename(columns={
+        'Actual_X': 'X_act', 'Actual_Y': 'Y_act', 
+        'x': 'x (relative)', 'y': 'y (relative)', 'Pi': 'Force Pi (tons)'
+    }).style.highlight_max(subset=['Force Pi (tons)'], color='#ffcccc'), use_container_width=True)
+
+    # --- 5. MATHEMATICAL STEPS (EXPANDABLE) ---
+    with st.expander("🔍 ดูรายละเอียดการคำนวณรายขั้นตอน (Detailed Formulas)"):
+        st.latex(r"\bar{X} = \frac{\sum X_{act}}{n}, \quad \bar{Y} = \frac{\sum Y_{act}}{n}")
+        st.latex(r"M_x = Q \cdot \bar{Y}, \quad M_y = Q \cdot \bar{X}")
+        st.latex(r"m = \frac{M_y \sum y^2 - M_x \sum xy}{\sum x^2 \sum y^2 - (\sum xy)^2}")
+        st.latex(r"n = \frac{M_x \sum x^2 - M_y \sum xy}{\sum x^2 \sum y^2 - (\sum xy)^2}")
+        st.latex(r"P_i = \frac{Q}{n} + m \cdot x_i + n \cdot y_i")
+        
+        st.write(f"**ค่าที่คำนวณได้:**")
+        st.write(f"- Σx² = {sum_x2:.2f} | Σy² = {sum_y2:.2f} | Σxy = {sum_xy:.2f}")
+        st.write(f"- m = {m:.6f} | n = {n_coeff:.6f}")
+        st.write(f"- ตรวจสอบสมดุลแรง: ΣPi = {df['Pi'].sum():.2f} (ต้องเท่ากับ {Q})")
+
+else:
+    st.warning("กรุณากรอกข้อมูลในตารางพิกัด")
