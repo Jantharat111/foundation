@@ -1,92 +1,109 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
-# ตั้งค่าหัวข้อ
-st.set_page_config(page_title="Pile Group Analysis", layout="wide")
-st.title("🏗️ Pile Group Load Calculation (Eccentric Load)")
-st.write("คำนวณแรงในเสาเข็มแต่ละต้นด้วยวิธี $P_i = Q/N + m \cdot x + n \cdot y$")
+# --- 1. Function สำหรับคำนวณตามวิธี Bakhoum (1992) ---
+def calculate_pile_loads(Q, ex, ey, x, y):
+    N = len(x)
+    Mx = Q * ey  # โมเมนต์รอบแกน X
+    My = Q * ex  # โมเมนต์รอบแกน Y
+    
+    # คำนวณค่าผลรวมทางสถิติของพิกัด
+    sum_x2 = np.sum(x**2)
+    sum_y2 = np.sum(y**2)
+    sum_xy = np.sum(x * y)
+    
+    # คำนวณ m และ n ตามสูตรในเอกสารหน้า 23
+    # m = (My*sum_y2 - Mx*sum_xy) / (sum_x2*sum_y2 - sum_xy^2)
+    # n = (Mx*sum_x2 - My*sum_xy) / (sum_x2*sum_y2 - sum_xy^2)
+    denom = (sum_x2 * sum_y2) - (sum_xy**2)
+    
+    if abs(denom) < 1e-9: # ป้องกันกรณีหารด้วยศูนย์
+        m, n = 0, 0
+    else:
+        m = (My * sum_y2 - Mx * sum_xy) / denom
+        n = (Mx * sum_x2 - My * sum_xy) / denom
+    
+    # คำนวณแรง Pi ในเสาเข็มแต่ละต้น
+    Pi = (Q / N) + (m * x) + (n * y)
+    
+    return Pi, np.sum(Pi)
 
-# ส่วนรับ Input จากผู้ใช้
-with st.sidebar:
-    st.header("📥 Input Parameters")
-    Q = st.number_input("Total Load (Q)", value=100.0, step=10.0)
-    ex = st.number_input("Eccentricity in X-axis (ex)", value=0.5, step=0.1)
-    ey = st.number_input("Eccentricity in Y-axis (ey)", value=0.3, step=0.1)
+# --- 2. Streamlit UI Design ---
+st.set_page_config(page_title="Pile Analysis Pro", layout="wide")
+st.title("🏗️ Pile Group Load Analysis (Bakhoum Method)")
+st.markdown("คำนวณแรงลงเสาเข็มรายต้น กรณีรับแรงเยื้องศูนย์แบบไม่สมมาตร")
+
+# ส่วนรับ Input
+col_input, col_result = st.columns([1, 2], gap="large")
+
+with col_input:
+    st.subheader("📥 ข้อมูลนำเข้า")
+    Q = st.number_input("แรงทั้งหมด (Q) [kN/Tons]", value=1000.0, step=100.0)
+    ex = st.number_input("ระยะเยื้อง ex [m]", value=0.40, step=0.05)
+    ey = st.number_input("ระยะเยื้อง ey [m]", value=0.20, step=0.05)
     
     st.divider()
-    st.write("ระบุพิกัดเสาเข็ม (x, y) วัดจาก Centroid")
-    # ตัวอย่างข้อมูลเริ่มต้น
-    default_piles = pd.DataFrame({
+    st.write("📍 **พิกัดเสาเข็ม (x, y)** วัดจาก Centroid")
+    # ตัวอย่างข้อมูลเริ่มต้น (4 ต้น)
+    default_data = pd.DataFrame({
         'x': [-1.0, 1.0, -1.0, 1.0],
-        'y': [1.0, 1.0, -1.0, -1.0]
+        'y': [1.2, 1.2, -1.2, -1.2]
     })
-    edited_piles = st.data_editor(default_piles, num_rows="dynamic")
+    edited_df = st.data_editor(default_data, num_rows="dynamic", use_container_width=True)
 
-# การคำนวณ
-if not edited_piles.empty:
-    x_coords = edited_piles['x'].values
-    y_coords = edited_piles['y'].values
-    N = len(x_coords)
+# --- 3. การประมวลผล ---
+if not edited_df.empty:
+    x_coords = edited_df['x'].values
+    y_coords = edited_df['y'].values
     
-    # 1. คำนวณค่า Sum of Squares
-    sum_x2 = np.sum(x_coords**2)
-    sum_y2 = np.sum(y_coords**2)
+    # คำนวณผลลัพธ์
+    Pi_array, total_check = calculate_pile_loads(Q, ex, ey, x_coords, y_coords)
     
-    # 2. หาค่า m และ n
-    # m = Mx / Sum(x^2) โดยที่ Mx = Q * ex
-    # n = My / Sum(y^2) โดยที่ My = Q * ey
-    m = (Q * ex) / sum_x2 if sum_x2 != 0 else 0
-    n = (Q * ey) / sum_y2 if sum_y2 != 0 else 0
-    
-    # 3. คำนวณ Pi สำหรับเสาเข็มแต่ละต้น
-    piles_res = []
-    for i in range(N):
-        xi = x_coords[i]
-        yi = y_coords[i]
-        Pi = (Q / N) + (m * xi) + (n * yi)
-        piles_res.append({
-            "Pile No.": i + 1,
-            "x": xi,
-            "y": yi,
-            "Load (Pi)": round(Pi, 4)
-        })
-    
-    df_res = pd.DataFrame(piles_res)
+    # จัดเตรียม DataFrame แสดงผล
+    res_df = edited_df.copy()
+    res_df.insert(0, "Pile No.", [f"P{i+1}" for i in range(len(x_coords))])
+    res_df['Load (Pi)'] = np.round(Pi_array, 2)
 
-    # แสดงผลลัพธ์
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.subheader("📊 Result Table")
-        st.table(df_res)
+    with col_result:
+        st.subheader("✅ สรุปผลการคำนวณ")
         
-        st.info(f"""
-        **Parameters Found:**
-        - จำนวนเสาเข็ม ($N$): {N} ต้น
-        - $m = (Q \\cdot e_x) / \\sum x^2$: {m:.4f}
-        - $n = (Q \\cdot e_y) / \\sum y^2$: {n:.4f}
-        """)
+        # แสดง Metric สำคัญ
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Max Load", f"{Pi_array.max():.2f}")
+        m2.metric("Min Load", f"{Pi_array.min():.2f}")
+        m3.metric("Sum Check", f"{total_check:.2f}", delta=f"{total_check-Q:.2f} (Error)")
 
-    with col2:
-        st.subheader("📍 Pile Layout & Load")
-        # แสดงกราฟตำแหน่งเสาเข็ม
-        st.scatter_chart(
-            df_res,
-            x='x',
-            y='y',
-            size='Load (Pi)',
-            color='Load (Pi)'
+        # ตารางผลลัพธ์พร้อม Highlight ตัวที่รับแรงสูงสุด
+        st.dataframe(
+            res_df.style.highlight_max(axis=0, subset=['Load (Pi)'], color='#FF4B4B'),
+            use_container_width=True, hide_index=True
         )
-        st.caption("ขนาดและสีของจุดแสดงถึงปริมาณแรงที่ลงเสาเข็ม")
+
+        # --- 4. การ Plot ด้วย Matplotlib ---
+        st.subheader("📍 Pile Layout & Distribution")
+        fig, ax = plt.subplots(figsize=(7, 5))
+        
+        # วาดตำแหน่งเสาเข็ม
+        scatter = ax.scatter(x_coords, y_coords, s=Pi_array*5, c=Pi_array, cmap='YlOrRd', edgecolors='black', alpha=0.8)
+        
+        # ใส่ชื่อและค่าแรงกำกับที่เสา
+        for i, val in enumerate(Pi_array):
+            ax.text(x_coords[i], y_coords[i] + 0.15, f"P{i+1}\n({val:.1f})", ha='center', fontsize=9, fontweight='bold')
+            
+        # วาดจุดแรงลง (Resultant Point)
+        ax.scatter(ex, ey, color='blue', marker='X', s=200, label='Resultant (ex, ey)')
+        
+        # ตกแต่งกราฟ
+        ax.axhline(0, color='grey', lw=0.8, ls='--')
+        ax.axvline(0, color='grey', lw=0.8, ls='--')
+        ax.set_xlabel("X-Axis (m)")
+        ax.set_ylabel("Y-Axis (m)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        st.pyplot(fig)
 
 else:
-    st.warning("กรุณาใส่ข้อมูลพิกัดเสาเข็มในตารางด้านซ้าย")
-
-# ส่วนแสดงสูตรที่ใช้
-with st.expander("ดูสูตรที่ใช้คำนวณ"):
-    st.latex(r"P_i = \frac{Q}{N} + \left( \frac{Q \cdot e_x}{\sum x^2} \right) x_i + \left( \frac{Q \cdot e_y}{\sum y^2} \right) y_i")
-    st.write("โดยที่:")
-    st.write("- $Q$: น้ำหนักรวมที่ลงฐานราก")
-    st.write("- $e_x, e_y$: ระยะเยื้องศูนย์จากจุด Centroid")
-    st.write("- $x_i, y_i$: พิกัดเสาเข็มต้นที่ $i$ วัดจากจุด Centroid")
+    st.info("กรุณาป้อนข้อมูลพิกัดในตารางฝั่งซ้าย")
