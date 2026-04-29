@@ -1,100 +1,104 @@
-"""
-Pile Group - Eccentric Load Calculator
-สูตร: Pi = Q/N + m*xi + n*yi
-โดย m, n หาจากระบบสมการกำลังสองน้อยที่สุด (least squares)
-
-  ΣMx = Q*ey  →  n*Σyi² = Q*ey  →  n = Q*ey / Σyi²
-  ΣMy = Q*ex  →  m*Σxi² = Q*ex  →  m = Q*ex / Σxi²
-"""
-
+import streamlit as st
+import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
-# ─────────────────────────────────────────────
-#  ข้อมูลนำเข้า (INPUT)
-# ─────────────────────────────────────────────
-Q  = 1000.0   # แรงกระทำแนวดิ่งรวม (kN)
-ex =    1.0   # ระยะเยื้องศูนย์ในทิศ x (m)
-ey =    0.5   # ระยะเยื้องศูนย์ในทิศ y (m)
+# --- 1. Function คำนวณหลัก ---
+def calculate_pile_group(Q, ex, ey, x, y):
+    N = len(x)
+    Mx = Q * ey
+    My = Q * ex
+    
+    # คำนวณค่าผลรวมต่างๆ
+    sum_x2 = np.sum(x**2)
+    sum_y2 = np.sum(y**2)
+    sum_xy = np.sum(x * y)
+    
+    # คำนวณ m และ n (สูตรสำหรับหน้าตัดไม่สมมาตร)
+    denom = (sum_x2 * sum_y2) - (sum_xy**2)
+    
+    # ป้องกันการหารด้วยศูนย์
+    if abs(denom) < 1e-9:
+        m, n = 0, 0
+    else:
+        m = (My * sum_y2 - Mx * sum_xy) / denom
+        n = (Mx * sum_x2 - My * sum_xy) / denom
+    
+    # คำนวณแรง Pi ในแต่ละต้น
+    Pi = (Q / N) + (m * x) + (n * y)
+    
+    return Pi, m, n, np.sum(Pi)
 
-# พิกัดเสาเข็มแต่ละต้น (x, y) หน่วย เมตร
-piles_xy = np.array([
-    [-1.5, -1.5],
-    [ 0.0, -1.5],
-    [ 1.5, -1.5],
-    [-1.5,  0.0],
-    [ 0.0,  0.0],
-    [ 1.5,  0.0],
-    [-1.5,  1.5],
-    [ 0.0,  1.5],
-    [ 1.5,  1.5],
-], dtype=float)
+# --- 2. Streamlit UI ---
+st.set_page_config(page_title="Pile Load Calculator", layout="wide")
+st.title("🏗️ Pile Group Load Calculator (Unsymmetrical Method)")
 
-# ─────────────────────────────────────────────
-#  คำนวณ
-# ─────────────────────────────────────────────
-N  = len(piles_xy)
-xi = piles_xy[:, 0]
-yi = piles_xy[:, 1]
+# ส่วน Sidebar สำหรับ Input
+with st.sidebar:
+    st.header("Input Parameters")
+    Q = st.number_input("Total Load (Q)", value=1000.0, step=100.0)
+    ex = st.number_input("Eccentricity ex", value=0.50, step=0.1)
+    ey = st.number_input("Eccentricity ey", value=0.30, step=0.1)
+    
+    st.divider()
+    st.write("ระบุพิกัดเสาเข็ม (x, y)")
+    # ค่าเริ่มต้น (ตัวอย่างเสา 4 ต้น)
+    default_piles = pd.DataFrame({
+        'x': [-1.0, 1.0, -1.0, 1.0],
+        'y': [1.2, 1.2, -1.2, -1.2]
+    })
+    edited_df = st.data_editor(default_piles, num_rows="dynamic")
 
-sum_x2 = np.sum(xi**2)
-sum_y2 = np.sum(yi**2)
+# --- 3. การประมวลผลและแสดงผล ---
+if not edited_df.empty:
+    x_coords = edited_df['x'].values
+    y_coords = edited_df['y'].values
+    
+    # รัน function คำนวณ
+    Pi, m_val, n_val, total_check = calculate_pile_group(Q, ex, ey, x_coords, y_coords)
+    
+    # สร้าง DataFrame ผลลัพธ์
+    res_df = edited_df.copy()
+    res_df['Pile Load (Pi)'] = Pi
+    
+    # แสดง Metric สำคัญ
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Max Load", f"{Pi.max():.2f}")
+    col2.metric("Min Load", f"{Pi.min():.2f}")
+    col3.metric("Sum Pi (Check)", f"{total_check:.2f}")
 
-# m, n (ความชันโมเมนต์)
-#   m*Σxi² = Q*ex  →  m = Q*ex / Σxi²
-#   n*Σyi² = Q*ey  →  n = Q*ey / Σyi²
-m = Q * ex / sum_x2 if sum_x2 != 0 else 0.0
-n = Q * ey / sum_y2 if sum_y2 != 0 else 0.0
+    # ตารางผลลัพธ์
+    st.subheader("Results Table")
+    st.dataframe(res_df.style.highlight_max(axis=0, subset=['Pile Load (Pi)'], color='#ff4b4b'))
 
-# แรงในแต่ละเสาเข็ม
-Pi = Q / N + m * xi + n * yi
+    # --- 4. การ Plot ด้วย Matplotlib ---
+    st.subheader("Pile Layout Visualization")
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    # Plot ตำแหน่งเสาเข็ม
+    sc = ax.scatter(x_coords, y_coords, s=Pi*2, c=Pi, cmap='viridis', edgecolors='black')
+    plt.colorbar(sc, label='Load (Pi)')
+    
+    # ใส่หมายเลขเสาและค่าแรง
+    for i, p in enumerate(Pi):
+        ax.text(x_coords[i], y_coords[i] + 0.1, f"P{i+1}: {p:.1f}", ha='center', fontsize=9)
+        
+    # Plot จุดศูนย์กลางแรง (Resultant Load)
+    ax.scatter(ex, ey, color='red', marker='X', s=100, label='Resultant Position (ex, ey)')
+    
+    ax.axhline(0, color='black', lw=0.5)
+    ax.axvline(0, color='black', lw=0.5)
+    ax.set_xlabel("X-axis")
+    ax.set_ylabel("Y-axis")
+    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.legend()
+    
+    st.pyplot(fig)
 
-# ─────────────────────────────────────────────
-#  แสดงผล
-# ─────────────────────────────────────────────
-SEP  = "=" * 58
-sep2 = "-" * 58
-
-print(SEP)
-print("   PILE GROUP — ECCENTRIC LOAD ANALYSIS")
-print(SEP)
-
-print(f"\n{'INPUT':}")
-print(f"  {'แรงกระทำรวม  Q':<28} = {Q:>10.2f}  kN")
-print(f"  {'ระยะเยื้องศูนย์ ex':<28} = {ex:>10.3f}  m")
-print(f"  {'ระยะเยื้องศูนย์ ey':<28} = {ey:>10.3f}  m")
-print(f"  {'จำนวนเสาเข็ม  N':<28} = {N:>10d}  ต้น")
-
-print(f"\n{'INTERMEDIATE VALUES':}")
-print(f"  {'Σxi²':<28} = {sum_x2:>10.4f}  m²")
-print(f"  {'Σyi²':<28} = {sum_y2:>10.4f}  m²")
-print(f"  {'m  = Q·ex / Σxi²':<28} = {m:>10.4f}  kN/m")
-print(f"  {'n  = Q·ey / Σyi²':<28} = {n:>10.4f}  kN/m")
-print(f"  {'Q/N (แรงเฉลี่ย)':<28} = {Q/N:>10.4f}  kN")
-
-print(f"\n{'PILE FORCES   Pi = Q/N + m·xi + n·yi':}")
-print(sep2)
-print(f"  {'#':<5} {'x (m)':>8} {'y (m)':>8} {'Q/N':>10} {'m·xi':>10} {'n·yi':>10} {'Pi (kN)':>10}")
-print(sep2)
-for i in range(N):
-    qn   = Q / N
-    mxi  = m * xi[i]
-    nyi  = n * yi[i]
-    print(f"  {i+1:<5} {xi[i]:>8.3f} {yi[i]:>8.3f} {qn:>10.2f} {mxi:>10.2f} {nyi:>10.2f} {Pi[i]:>10.2f}")
-print(sep2)
-
-print(f"\n{'SUMMARY':}")
-print(f"  {'แรงสูงสุด  P_max':<28} = {Pi.max():>10.2f}  kN  (เสาต้นที่ {Pi.argmax()+1})")
-print(f"  {'แรงต่ำสุด  P_min':<28} = {Pi.min():>10.2f}  kN  (เสาต้นที่ {Pi.argmin()+1})")
-print(f"  {'แรงเฉลี่ย':<28} = {Pi.mean():>10.2f}  kN")
-print(f"  {'ΣPi (ต้องเท่ากับ Q)':<28} = {Pi.sum():>10.2f}  kN")
-
-# ตรวจสอบสมดุล
-ok_force  = np.isclose(Pi.sum(),        Q,     atol=1e-6)
-ok_mom_x  = np.isclose(np.sum(Pi * yi), Q * ey, atol=1e-6)
-ok_mom_y  = np.isclose(np.sum(Pi * xi), Q * ex, atol=1e-6)
-
-print(f"\n{'EQUILIBRIUM CHECK':}")
-print(f"  {'ΣPi = Q':<35} {'✓ OK' if ok_force else '✗ FAIL'}")
-print(f"  {'ΣPi·yi = Q·ey (โมเมนต์รอบแกน x)':<35} {'✓ OK' if ok_mom_x else '✗ FAIL'}")
-print(f"  {'ΣPi·xi = Q·ex (โมเมนต์รอบแกน y)':<35} {'✓ OK' if ok_mom_y else '✗ FAIL'}")
-print(SEP)
+    # สรุปสูตรที่ใช้
+    with st.expander("Show Formulas"):
+        st.latex(r"m = \frac{M_y \sum y^2 - M_x \sum xy}{\sum x^2 \sum y^2 - (\sum xy)^2}")
+        st.latex(r"n = \frac{M_x \sum x^2 - My \sum xy}{\sum x^2 \sum y^2 - (\sum xy)^2}")
+        st.latex(r"P_i = \frac{Q}{N} + m \cdot x + n \cdot y")
+else:
+    st.error("Please provide pile coordinates.")
