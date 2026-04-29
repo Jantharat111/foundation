@@ -1,103 +1,91 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
-# --- ฟังก์ชันคำนวณ (General Case) ---
-def calculate_pile_loads(Q, ex, ey, x, y):
-    N = len(x)
-    Mx = Q * ey  # Moment รอบแกน X
-    My = Q * ex  # Moment รอบแกน Y
+st.set_page_config(page_title="Pile Analysis (Bakhoum Method)", layout="wide")
+st.title("🏗️ โปรแกรมวิเคราะห์แรงเสาเข็มตามขั้นตอนในสไลด์")
+st.caption("อ้างอิงวิธีคำนวณ: รศ.ดร.อิทธิพล มีผล (Bakhoum, 1992)")
+
+# --- Input Section ---
+with st.sidebar:
+    st.header("ข้อมูลพื้นฐาน")
+    Q = st.number_input("แรงทั้งหมดที่ลงฐานราก (Q) [ton]", value=50.0)
     
-    # คำนวณค่าทางสถิติ
-    sum_x2 = np.sum(x**2)
-    sum_y2 = np.sum(y**2)
-    sum_xy = np.sum(x * y)
+    st.header("พิกัดการออกแบบและระยะเยื้อง")
+    # ตัวอย่างข้อมูลจาก Slide 12-13
+    data = {
+        'Pile': ['P1', 'P2'],
+        'Design_X': [-37.5, 37.5],  # พิกัดตามแบบ
+        'Design_Y': [0.0, 0.0],
+        'error_x': [0.0, 7.0],      # ระยะเยื้องที่ตรวจพบ (ex)
+        'error_y': [5.0, -10.0]     # ระยะเยื้องที่ตรวจพบ (ey)
+    }
+    df_input = st.data_editor(pd.DataFrame(data), num_rows="dynamic")
+
+if not df_input.empty:
+    n = len(df_input)
     
-    # ตัวหาร (Denominator) ตามวิธี Bakhoum
+    # --- STEP 1: หาจุด Centroid ใหม่ (Slide 5, 10) ---
+    st.subheader("Step 1: คำนวณจุด Centroid ใหม่")
+    centroid_x = df_input['error_x'].sum() / n
+    centroid_y = df_input['error_y'].sum() / n
+    
+    col_c1, col_c2 = st.columns(2)
+    col_c1.metric("Centroid X (X_bar)", f"{centroid_x:.3f} cm")
+    col_c2.metric("Centroid Y (Y_bar)", f"{centroid_y:.3f} cm")
+
+    # --- STEP 2: คำนวณโมเมนต์ (Slide 11) ---
+    st.subheader("Step 2: คำนวณโมเมนต์จาก Centroid ใหม่")
+    Mx = Q * centroid_y  # ในสไลด์ใช้ Q * Y_bar
+    My = Q * centroid_x  # ในสไลด์ใช้ Q * X_bar
+    
+    col_m1, col_m2 = st.columns(2)
+    col_m1.write(f"**Mx** = Q × Y_bar = {Q} × {centroid_y} = **{Mx:.2f} ton-cm**")
+    col_m2.write(f"**My** = Q × X_bar = {Q} × {centroid_x} = **{My:.2f} ton-cm**")
+
+    # --- STEP 3 & 4: คำนวณพิกัดใหม่และค่าผลรวม (Slide 12, 13) ---
+    st.subheader("Step 3 & 4: คำนวณพิกัดใหม่เทียบกับ Centroid และค่า Summation")
+    
+    # พิกัดใหม่ = พิกัดเดิม + ระยะเยื้อง - Centroid
+    df_input['x'] = df_input['Design_X'] + df_input['error_x'] - centroid_x
+    df_input['y'] = df_input['Design_Y'] + df_input['error_y'] - centroid_y
+    
+    df_input['x2'] = df_input['x']**2
+    df_input['y2'] = df_input['y']**2
+    df_input['xy'] = df_input['x'] * df_input['y']
+    
+    st.dataframe(df_input[['Pile', 'x', 'y', 'x2', 'y2', 'xy']], use_container_width=True)
+    
+    sum_x2 = df_input['x2'].sum()
+    sum_y2 = df_input['y2'].sum()
+    sum_xy = df_input['xy'].sum()
+
+    # --- STEP 5: คำนวณ m และ n (Slide 14, 15) ---
+    st.subheader("Step 5: คำนวณสัมประสิทธิ์ m และ n (Bakhoum Equation)")
+    
     denom = (sum_x2 * sum_y2) - (sum_xy**2)
     
-    if abs(denom) < 1e-9:
-        return np.full(N, Q/N), 0, 0, sum_xy # กรณีเสาอยู่ที่จุดเดียวซ้อนกัน
-    
-    # คำนวณสัมประสิทธิ์ m และ n (ซ่อนไว้เบื้องหลัง)
-    m = (My * sum_y2 - Mx * sum_xy) / denom
-    n = (Mx * sum_x2 - My * sum_xy) / denom
-    
-    # แรงในเสาแต่ละต้น Pi = Q/N + mx + ny
-    Pi = (Q / N) + (m * x) + (n * y)
-    
-    return Pi, m, n, sum_xy
+    if abs(sum_xy) < 1e-5:
+        st.success("กลุ่มเสาเข็มสมมาตร (Symmetric): ใช้สูตรอย่างง่าย")
+        m = My / sum_x2
+        n_coeff = Mx / sum_y2
+    else:
+        st.warning("กลุ่มเสาเข็มไม่สมมาตร (Unsymmetrical): ใช้สูตรเต็มของ Bakhoum")
+        m = (My * sum_y2 - Mx * sum_xy) / denom
+        n_coeff = (Mx * sum_x2 - My * sum_xy) / denom
 
-# --- ส่วนการแสดงผลบน Streamlit ---
-st.set_page_config(page_title="Pile Group Analysis", layout="wide")
-st.title("🏗️ วิเคราะห์แรงเสาเข็ม (Symmetric & Unsymmetrical)")
-st.info("โปรแกรมใช้สมการทั่วไปของ Bakhoum (1992) ซึ่งรองรับทั้งกลุ่มเสาเข็มแบบสมมาตรและไม่สมมาตร")
+    st.write(f"ค่า **m** = {m:.6f} | ค่า **n** = {n_coeff:.6f}")
 
-# Sidebar Input
-with st.sidebar:
-    st.header("1. ข้อมูลแรงที่ลงฐานราก")
-    Q = st.number_input("แรงทั้งหมด (Q)", value=1200.0, step=100.0)
-    ex = st.number_input("ระยะเยื้องแกน X (ex)", value=0.45, step=0.05)
-    ey = st.number_input("ระยะเยื้องแกน Y (ey)", value=0.30, step=0.05)
+    # --- STEP 6: คำนวณแรงในเสาแต่ละต้น (Slide 14) ---
+    st.subheader("Step 6: สรุปแรงปฏิกิริยาในเสาเข็ม (Pi)")
     
-    st.header("2. พิกัดเสาเข็ม (x, y)")
-    # ตัวอย่าง: ลองเปลี่ยนค่า x, y ให้ไม่สมมาตรเพื่อทดสอบ
-    default_piles = pd.DataFrame({
-        'x': [-0.8, 0.8, -0.8, 1.2], # เสาต้นที่ 4 เบี้ยวไปทางขวา (ไม่สมมาตร)
-        'y': [1.0, 1.0, -1.0, -1.0]
-    })
-    pile_input = st.data_editor(default_piles, num_rows="dynamic", use_container_width=True)
-
-# ส่วนคำนวณและแสดงผล
-if not pile_input.empty:
-    x_val = pile_input['x'].values
-    y_val = pile_input['y'].values
+    # Pi = Q/n + mx + ny
+    df_input['Pi'] = (Q/n) + (m * df_input['x']) + (n_coeff * df_input['y'])
     
-    # คำนวณ
-    loads, m_val, n_val, s_xy = calculate_pile_loads(Q, ex, ey, x_val, y_val)
+    st.table(df_input[['Pile', 'x', 'y', 'Pi']].rename(columns={'Pi': 'Force (ton)'}))
     
-    # ผลลัพธ์
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.subheader("📊 สรุปผลแรงในเสาเข็ม")
-        
-        # แสดงสถานะความสมมาตร
-        if abs(s_xy) < 1e-5:
-            st.success("สถานะ: กลุ่มเสาเข็มแบบสมมาตร (Symmetric)")
-        else:
-            st.warning(f"สถานะ: กลุ่มเสาเข็มแบบไม่สมมาตร (Unsymmetrical) [Σxy = {s_xy:.2f}]")
-
-        res_df = pile_input.copy()
-        res_df.insert(0, "Pile", [f"P{i+1}" for i in range(len(x_val))])
-        res_df['Force (Pi)'] = np.round(loads, 2)
-        
-        st.table(res_df.style.highlight_max(axis=0, subset=['Force (Pi)'], color='#ffcccc'))
-        
-        st.metric("Total Sum Check", f"{np.sum(loads):.2f}", delta=f"Gap: {np.sum(loads)-Q:.4f}")
-
-    with col2:
-        st.subheader("📍 ผังการกระจายแรง")
-        fig, ax = plt.subplots(figsize=(6, 5))
-        
-        # วาดเสาเข็ม
-        # ปรับขนาดจุดตามแรง (ให้เห็นความต่างชัดเจน)
-        sc = ax.scatter(x_val, y_val, s=loads*2, c=loads, cmap='autumn_r', edgecolors='black', zorder=3)
-        plt.colorbar(sc, label='Load')
-
-        # ใส่เลขเสาและค่าแรง
-        for i, (xi, yi) in enumerate(zip(x_val, y_val)):
-            ax.text(xi, yi+0.15, f"P{i+1}\n({loads[i]:.1f})", ha='center', fontsize=9, fontweight='bold')
-
-        # จุดแรงลงจริง
-        ax.scatter(ex, ey, color='blue', marker='X', s=150, label='Resultant Load', zorder=4)
-        
-        ax.axhline(0, color='black', lw=0.5); ax.axvline(0, color='black', lw=0.5)
-        ax.grid(True, linestyle=':', alpha=0.6)
-        ax.set_xlabel("X-coord"); ax.set_ylabel("Y-coord")
-        ax.legend()
-        st.pyplot(fig)
+    # ตรวจสอบสมดุล
+    st.write(f"**ตรวจสอบผลรวมแรง:** ΣPi = {df_input['Pi'].sum():.2f} ton (ต้องเท่ากับ Q = {Q})")
 
 else:
-    st.error("กรุณากรอกพิกัดเสาเข็ม")
+    st.info("กรุณากรอกข้อมูลพิกัดเสาเข็มในแถบด้านข้าง")
